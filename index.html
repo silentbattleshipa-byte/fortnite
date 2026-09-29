@@ -9536,6 +9536,7 @@ function autoStartFromUrl() {
   const lobbyFlag = P.lobby !== undefined ? P.lobby : (P.menu !== undefined ? P.menu : '0');
   if (flagOn(lobbyFlag)) return false;   // 明示的にロビー希望
   if (net.active) return false;          // オンライン接続中は勝手に出撃しない
+  // 出撃指定が無いURL（ttp://…/ や index.html を開くだけ）でも自動で即出撃させる。
   const last = lastMode();
   let mode = MODE_ALIAS[String(P.mode || '').toLowerCase()] || '';
   if (!mode || !PLAY_MODES.some(o => o.base === mode)) mode = last.mode || 'br';
@@ -9545,7 +9546,7 @@ function autoStartFromUrl() {
   startGame(mode, two, mod);
   return true;
 }
-// 起動：?lobby=1 でない限りロビーを飛ばして即出撃（?lobby=1 のときだけロビー背景生成）
+// 起動：URLを開くだけなら即出撃。?lobby=1 / ?menu=1 でロビーに留まる。
 if (!autoStartFromUrl()) initGame();
 applyGliderSkin();
 renderLobby();
