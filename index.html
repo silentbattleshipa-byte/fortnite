@@ -74,6 +74,11 @@
   #hint { position:absolute; bottom:112px; left:50%; transform:translateX(-50%);
     background:rgba(10,14,30,0.8); border:1px solid rgba(255,255,255,0.25); border-radius:8px;
     padding:5px 14px; font-size:14px; font-weight:700; }
+  /* HUD：いつでも戻れる「ロビーへ」ボタン */
+  .hudBtn { position:absolute; left:14px; top:52px; z-index:8; pointer-events:auto; cursor:pointer;
+    background:rgba(10,14,30,0.8); border:2px solid rgba(255,255,255,0.35); color:#fff;
+    font-family:inherit; font-size:13px; font-weight:800; border-radius:10px; padding:7px 13px; }
+  .hudBtn:active { transform:translateY(2px); background:rgba(255,213,74,0.35); }
   #crosshair { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
     width:22px; height:22px; transition:all 0.12s;
     background:radial-gradient(circle, #fff 0 2px, transparent 2.5px); }
@@ -333,6 +338,7 @@
   <div id="buildBanner" class="hidden">🔨 建築モード — Z壁 X床 C階段 V屋根 │ 左クリック設置(長押しターボ)、右クリック回転、G編集、B素材、Q解除</div>
   <canvas id="minimap" width="170" height="170"></canvas>
   <div id="killfeed"></div>
+  <button class="hudBtn hidden" id="hudLobbyBtn" title="Lキーでもロビーに戻れます">☰ ロビー</button>
   <div id="hint" class="hidden"></div>
   <div id="crosshair"></div>
   <div id="crosshair2"></div>
@@ -412,7 +418,7 @@
     <div class="lobbyWallet">
       <div class="accountLv" id="accountLv"></div>
       <div class="pill" id="vbuckPill">⭐ <span id="vbuckAmt">0</span> V-Bucks</div>
-      <button class="pill" id="directLinkBtn" title="URLに ?play=1 を付けた「即戦場リンク」をコピー">⚡ 直接プレイURL</button>
+      <button class="pill" id="directLinkBtn" title="今のモードですぐ対戦画面へ入るURLをコピー">⚡ 直接プレイURL</button>
     </div>
   </div>
   <div class="subtitle">バトルロイヤル v2 ・ ソロ40人対戦 / デュオ対戦 ＆ 1v1デュエルで最後の1人(1チーム)になれ！</div>
@@ -483,7 +489,7 @@
     <div><b>タッチ操作（iPad等）</b> 初タップでボタン表示 — 左スティック移動（倒し切りダッシュ）・右スワイプ視点・攻撃/ジャンプ/エイム/建築/武器/E/R/💣🧪🩹/🎯/しゃがみ/降下ボタン・スロットタップ切替</div>
   </div>
   </details>
-  <div class="note">⚡ <b>即戦場リンク</b>：URLに <code>?play=1</code> を付けるとロビーを飛ばして前回のモードですぐ対戦開始（<code>&amp;mode=duel|pvp|rvb|bed|br</code> <code>&amp;mod=sniper|melee|bow|explosive|shotgun|nobuild|turbo</code> <code>&amp;two=1</code> も指定可）。上の「⚡ 直接プレイURL」で今のモードのリンクをコピーできます。<br>
+  <div class="note">⚡ <b>即戦場リンク</b>：このURLを開くと<b>そのまま対戦画面</b>が始まります（モードは前回の続き）。<code>?mode=duel|pvp|rvb|bed|br</code> <code>&amp;mod=sniper|melee|bow|explosive|shotgun|nobuild|turbo</code> <code>&amp;two=1</code> で指定でき、<code>?lobby=1</code> を付けるとまずこのロビーが表示されます（戦闘中は HUD 左上の「☰ ロビー」か <b>Lキー</b>で戻れます）。上の「⚡ 直接プレイURL」で今のモードのリンクをコピーできます。<br>
   ネオン街・倉庫地帯・湖畔の村などPOIから降りよう。クエスト達成でXP獲得！マップ各地に🚗車・🛡戦車・🚃電車・🚁ヘリ・✈零戦×5・環状レール電車あり（Eで乗車・全乗物HP付き）。<br>
   「バトルロイヤル（2人・デュオ）」は1台のPCで2人協力プレイ（画面左右分割・味方誤射なし・どちらかが生き残れば勝利）。2Pはゲームパッド or キーボード（矢印＋IJKL＋Enter）で操作。<br>
   「2人プレイ（1v1）」「1v1デュエル」はアリーナ北側の🔫武器庫で全銃（ガトリング含む）が選択可・南側駐車場に車/戦車/ヘリ/零戦/電車あり。<br>
@@ -936,6 +942,13 @@ const QUEST_POOL = [
 
 // ===== グローバル状態 =====
 const state = { phase: 'menu', paused: false, endShown: false, mode: 'br', twoPlayer: false };
+// 画面を1P/2Pに分割するか？＝同じPCで2人プレイしているときだけ。
+// オンラインではホスト=1P全画面・ゲスト=2P全画面 にする（ホスト側に2P画面を出さない）。
+function isSplitScreen() {
+  if (!state.twoPlayer || players.length < 2) return false;
+  if (net.active) return false;
+  return true;
+}
 let players = [];            // players[0]=1P / players[1]=2P（コントローラー）
 let player;                  // = players[0]（互換エイリアス）
 let bots, bullets, grenades, structures, structGrid, cellStructs,
@@ -4308,6 +4321,8 @@ function backToLobby() {
   $('touchUI').classList.add('hidden');
   document.body.classList.remove('twop');
   $('menu').classList.remove('hidden');
+  const lb = $('hudLobbyBtn');
+  if (lb) lb.classList.add('hidden');
 }
 function startGame(mode, two, mod) {
   // オンラインゲストはローカル開始不可／ホストのローカル開始は切断して続行
@@ -4332,10 +4347,14 @@ function startGame(mode, two, mod) {
   $('endScreen').classList.add('hidden');
   $('pauseScreen').classList.add('hidden');
   $('hud').classList.remove('hidden');
+  const lb = $('hudLobbyBtn');
+  if (lb) lb.classList.remove('hidden');
   if (touchOn) $('touchUI').classList.remove('hidden');
-  document.body.classList.toggle('twop', state.twoPlayer);
-  $('hud2').classList.toggle('hidden', !state.twoPlayer);
-  $('divider').classList.toggle('hidden', !state.twoPlayer);
+  const splitView = isSplitScreen();
+  document.body.classList.toggle('twop', splitView);
+  $('hud2').classList.toggle('hidden', !splitView);
+  $('divider').classList.toggle('hidden', !splitView);
+  resize(); // 分割の有無でアスペクト比が変わるため更新
   if (state.mode === 'duel' || state.mode === 'pvp' || state.mode === 'rvb' || state.mode === 'bed') {
     // 1v1 / 2人対戦 / レッド対ブルー / ベッドウォーズ：即時対戦（バスなし）
     state.phase = 'play';
@@ -4638,8 +4657,9 @@ function showDmgText(pos, text, color, cam) {
   if (v.z > 1) return;
   const d = document.createElement('div');
   d.className = 'dmg';
-  const half = state.twoPlayer && cams.indexOf(cam || cams[0]) === 1;
-  d.style.left = (((v.x * 0.5 + 0.5) * (state.twoPlayer ? vw / 2 : vw)) + (half ? vw / 2 : 0)) + 'px';
+  const splitView = isSplitScreen();
+  const half = splitView && cams.indexOf(cam || cams[0]) === 1;
+  d.style.left = (((v.x * 0.5 + 0.5) * (splitView ? vw / 2 : vw)) + (half ? vw / 2 : 0)) + 'px';
   d.style.top = ((-v.y * 0.5 + 0.5) * vh) + 'px';
   d.style.color = color;
   if (String(text).indexOf('HS') === 0) d.style.fontSize = '19px';
@@ -8540,10 +8560,9 @@ function updateHUD() {
     rl.classList.remove('hidden'); rlbl.classList.remove('hidden');
     rf.style.width = Math.round((1 - cw.reloading / (cw.reloadTotal || WEAPON_TYPES[cw.type].reload)) * 100) + '%';
   } else { rl.classList.add('hidden'); rlbl.classList.add('hidden'); }
-  // クロスヘア（1P・2Pとも表示／分割時は各画面の中央・ゲストは全画面中央）
+  // クロスヘア（分割時は各画面の中央・solo/オンラインは全画面中央）
   const ch1 = $('crosshair'), ch2 = $('crosshair2');
-  const guestView = net.active && !net.isHost;
-  if (state.twoPlayer && !guestView) {
+  if (isSplitScreen()) {
     ch1.style.left = '25%';
     ch2.style.left = '75%';
     ch2.style.display = players[1] && players[1].alive ? 'block' : 'none';
@@ -8582,7 +8601,7 @@ function updateHUD() {
   // ヒント
   const hint = $('hint');
   let hintTxt = '';
-  if (state.phase === 'bus') hintTxt = state.twoPlayer ? 'スペース(1P) / Enter(2P): 飛び降りる！（好きな場所で）' : 'スペース: 飛び降りる！（好きな場所で）';
+  if (state.phase === 'bus') hintTxt = (state.twoPlayer && !net.active) ? 'スペース(1P) / Enter(2P): 飛び降りる！（好きな場所で）' : 'スペース: 飛び降りる！（好きな場所で）';
   else if (state.phase === 'sky') hintTxt = player.glider ? 'グライダー展開中 — WASDで移動' : '自由落下中 — WASDで方向調整';
   else if (player.inVehicle) {
     const vk = player.inVehicle.kind;
@@ -9042,7 +9061,7 @@ function frame(t) {
     if (state.phase !== 'menu' && !state.paused) update(dt);
     else for (const pl of players) updateCameraFor(pl, dt);
     // 分割レンダリング（2人時: 1P=左 / 2P=右）
-    if (state.twoPlayer && players.length > 1) {
+    if (isSplitScreen()) {
       const half = Math.floor(vw / 2);
       renderer.setScissorTest(true);
       renderer.setViewport(0, 0, half, vh);
@@ -9056,7 +9075,7 @@ function frame(t) {
       renderer.setViewport(0, 0, vw, vh);
       renderer.render(scene, cams[0]);
     }
-    if (state.phase !== 'menu') { updateHUD(); if (state.twoPlayer) updateHUD2(); drawMinimap(); }
+    if (state.phase !== 'menu') { updateHUD(); if (isSplitScreen()) updateHUD2(); drawMinimap(); }
   } catch (err) { console.error(err); }
 }
 
@@ -9066,7 +9085,7 @@ function frame(t) {
 function resize() {
   vw = window.innerWidth; vh = window.innerHeight;
   renderer.setSize(vw, vh);
-  const aspect = (state.twoPlayer ? vw / 2 : vw) / vh;
+  const aspect = (isSplitScreen() ? vw / 2 : vw) / vh;
   cams[0].aspect = aspect;
   cams[1].aspect = aspect;
   cams[0].updateProjectionMatrix();
@@ -9090,6 +9109,8 @@ window.addEventListener('keydown', e => {
     if (state.paused) resumeGame();
     else pauseGame();
   }
+  // ロビーに戻る（1PのLキー／HUDの「☰ ロビー」ボタン）
+  if (e.code === 'KeyL' && !state.twoPlayer && !state.paused && !state.endShown) { backToLobby(); return; }
   // ★オートエイム切替（Nキー・ポーズ中以外ならいつでも）
   if (e.code === 'KeyN' && !state.paused && state.phase !== 'menu') {
     setAutoAim(!autoAim);
@@ -9472,12 +9493,12 @@ $('lobbyBtn2').addEventListener('click', e => { e.stopPropagation(); backToLobby
 $('bedShopClose').addEventListener('click', closeBedShop);
 $('rvbShopClose').addEventListener('click', closeRvbShop);
 
-// =========================================================
-// 直接ゲーム起動（URLパラメータ）
-//   index.html?play=1                 … ロビーを飛ばして前回のモードで即出撃
-//   index.html?play=1&mode=duel       … モード指定
-//   index.html?play=1&mode=br&mod=sniper&two=1
-//   index.html?play=1&mode=bed        … ベッドウォーズ etc
+// URLパラメータ（既定は即出撃 / ?lobby=1 だけロビーを先に表示）
+//   index.html                      … 前回のモードですぐ対戦開始（リンクを開くと直ゲーム画面）
+//   index.html?lobby=1              … ロビーを先に表示（モードを選ぶ）
+//   index.html?mode=duel            … モード指定
+//   index.html?mode=br&mod=sniper   … 武器縛りなどの改造も指定可
+//   index.html?mode=pvp&two=1       … 2人プレイ
 // =========================================================
 const MODE_ALIAS = {
   br: 'br', royale: 'br', battle: 'br',
@@ -9501,21 +9522,20 @@ function urlParams() {
   return P;
 }
 function flagOn(v) { return v === '' || v === '1' || v === 'true' || v === 'on' || v === 'yes'; }
-// 直接リンクの生成（?play=1&mode=…&two=1&mod=…）
+// 直接リンクの生成（?mode=…&two=1&mod=…）— 開いた瞬間にそのモードで出撃する
 function directPlayURL(m) {
   const m2 = m || lastMode();
   let base = '';
   try { base = location.href.split('?')[0].split('#')[0]; } catch (e) { base = 'index.html'; }
-  return base + '?play=1&mode=' + encodeURIComponent(m2.mode || 'br') +
+  return base + '?mode=' + encodeURIComponent(m2.mode || 'br') +
     (m2.two ? '&two=1' : '') + (m2.mod ? '&mod=' + encodeURIComponent(m2.mod) : '');
 }
-// URLに play/auto/quick/start/go/skip があればロビーをスキップして出撃
+// URLに lobby=1 / menu=1 があればロビー表示・それ以外は自動で即出撃
 function autoStartFromUrl() {
   const P = urlParams();
-  const trig = ['play', 'auto', 'quick', 'start', 'go', 'skip', 'battle']
-    .some(k => P[k] !== undefined && flagOn(P[k]));
-  if (!trig) return false;
-  if (net.active) return false;           // オンライン接続中はURLで勝手に出撃しない
+  const lobbyFlag = P.lobby !== undefined ? P.lobby : (P.menu !== undefined ? P.menu : '0');
+  if (flagOn(lobbyFlag)) return false;   // 明示的にロビー希望
+  if (net.active) return false;          // オンライン接続中は勝手に出撃しない
   const last = lastMode();
   let mode = MODE_ALIAS[String(P.mode || '').toLowerCase()] || '';
   if (!mode || !PLAY_MODES.some(o => o.base === mode)) mode = last.mode || 'br';
@@ -9525,22 +9545,26 @@ function autoStartFromUrl() {
   startGame(mode, two, mod);
   return true;
 }
-// 起動：URLに play があればロビーを飛ばして即出撃（それ以外はロビー背景生成）
+// 起動：?lobby=1 でない限りロビーを飛ばして即出撃（?lobby=1 のときだけロビー背景生成）
 if (!autoStartFromUrl()) initGame();
 applyGliderSkin();
 renderLobby();
 // ロビーの「⚡ 直接プレイURL」ボタン：即戦場リンクをコピー
 (function bindDirectLink() {
   const btn = $('directLinkBtn');
-  if (!btn) return;
-  btn.addEventListener('click', () => {
-    const url = directPlayURL();
-    const done = () => toast('⚡ コピーしました：' + url);
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(done, () => { toast(url); });
-    } else toast(url);
-    SFX.pickup();
-  });
+  if (btn) {
+    btn.addEventListener('click', () => {
+      const url = directPlayURL();
+      const done = () => toast('⚡ コピーしました：' + url);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(done, () => { toast(url); });
+      } else toast(url);
+      SFX.pickup();
+    });
+  }
+  // 戦闘中の「☰ ロビー」ボタン
+  const lb = $('hudLobbyBtn');
+  if (lb) lb.addEventListener('click', e => { e.stopPropagation(); backToLobby(); });
 })();
 requestAnimationFrame(frame);
 </script>
