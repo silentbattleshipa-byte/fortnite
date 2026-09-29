@@ -176,6 +176,9 @@
   .lobbyWallet { display:flex; align-items:center; gap:10px; }
   .lobbyWallet .accountLv { margin:0; }
   #vbuckPill { background:rgba(10,14,30,0.8); border:1px solid #4ff2ff; color:#4ff2ff; pointer-events:auto; }
+  #directLinkBtn { background:rgba(10,14,30,0.8); border:1px solid #ffd54a; color:#ffd54a;
+    font-family:inherit; font-weight:800; cursor:pointer; pointer-events:auto; }
+  #directLinkBtn:active { transform:translateY(1px); }
   .lobbyTabs { display:flex; gap:10px; margin:10px 0 14px; }
   .ltab { pointer-events:auto; cursor:pointer; font-size:17px; font-weight:900; color:#cfd8ff;
     background:rgba(255,255,255,0.07); border:2px solid rgba(255,255,255,0.18); border-radius:10px;
@@ -409,6 +412,7 @@
     <div class="lobbyWallet">
       <div class="accountLv" id="accountLv"></div>
       <div class="pill" id="vbuckPill">⭐ <span id="vbuckAmt">0</span> V-Bucks</div>
+      <button class="pill" id="directLinkBtn" title="URLに ?play=1 を付けた「即戦場リンク」をコピー">⚡ 直接プレイURL</button>
     </div>
   </div>
   <div class="subtitle">バトルロイヤル v2 ・ ソロ40人対戦 / デュオ対戦 ＆ 1v1デュエルで最後の1人(1チーム)になれ！</div>
@@ -479,7 +483,8 @@
     <div><b>タッチ操作（iPad等）</b> 初タップでボタン表示 — 左スティック移動（倒し切りダッシュ）・右スワイプ視点・攻撃/ジャンプ/エイム/建築/武器/E/R/💣🧪🩹/🎯/しゃがみ/降下ボタン・スロットタップ切替</div>
   </div>
   </details>
-  <div class="note">ネオン街・倉庫地帯・湖畔の村などPOIから降りよう。クエスト達成でXP獲得！マップ各地に🚗車・🛡戦車・🚃電車・🚁ヘリ・✈零戦×5・環状レール電車あり（Eで乗車・全乗物HP付き）。<br>
+  <div class="note">⚡ <b>即戦場リンク</b>：URLに <code>?play=1</code> を付けるとロビーを飛ばして前回のモードですぐ対戦開始（<code>&amp;mode=duel|pvp|rvb|bed|br</code> <code>&amp;mod=sniper|melee|bow|explosive|shotgun|nobuild|turbo</code> <code>&amp;two=1</code> も指定可）。上の「⚡ 直接プレイURL」で今のモードのリンクをコピーできます。<br>
+  ネオン街・倉庫地帯・湖畔の村などPOIから降りよう。クエスト達成でXP獲得！マップ各地に🚗車・🛡戦車・🚃電車・🚁ヘリ・✈零戦×5・環状レール電車あり（Eで乗車・全乗物HP付き）。<br>
   「バトルロイヤル（2人・デュオ）」は1台のPCで2人協力プレイ（画面左右分割・味方誤射なし・どちらかが生き残れば勝利）。2Pはゲームパッド or キーボード（矢印＋IJKL＋Enter）で操作。<br>
   「2人プレイ（1v1）」「1v1デュエル」はアリーナ北側の🔫武器庫で全銃（ガトリング含む）が選択可・南側駐車場に車/戦車/ヘリ/零戦/電車あり。<br>
   「レッド対ブルー」は8vs8のチームデスマッチ（30キル先取／制限時間10分）。1人でも2人でも遊べる（2人時は画面左右分割）。<br>
@@ -665,6 +670,7 @@ const SFX = {
   lose:    () => tone(300, 0.4, 'sawtooth', 0.12, -180),
   jump:    () => tone(400, 0.1, 'sine', 0.05, 150),
   land:    () => tone(120, 0.12, 'triangle', 0.14, -40),
+  step:    () => tone(150 + Math.random() * 90, 0.055, 'triangle', 0.05, -70),
   whoosh:  () => tone(500, 0.5, 'sawtooth', 0.06, -400),
   glider:  () => tone(300, 0.3, 'sine', 0.06, 100),
   gthrow:  () => tone(500, 0.1, 'sine', 0.07, -150),
@@ -1014,6 +1020,8 @@ const keys = {};
 const mouse = { down: false, rdown: false };
 // ===== タッチ操作（iPad等） =====
 const touchState = { mx: 0, mz: 0, jump: false, attack: false, sprint: false };
+// タッチUIのADS・しゃがみ（オンラインゲストはホストへ転送）
+const touchFlags = { ads: false };
 let touchOn = false;
 
 // ===== DOM =====
@@ -1369,34 +1377,159 @@ function refreshGunMesh(ent) {
   while (holder.children.length) holder.remove(holder.children[0]);
   holder.add(makeGunMesh(t, r, gl, ps));
 }
-function makeHumanoid(shirtColorHex, name) {
+// -responsibility: キャラクターモデル（一人称/三人称共通・関節付きリグ）
+// 旧「棒人間(Box4枚)」を廃止し、hip/胸/肩/肘/膝/足首の関節を持つ
+// Fortnite風のプロポーション（身長1.87m・頭身6.5頭身）にする。
+const HIP_Y = 0.93;
+function makeHumanoid(shirtColorHex, name, detail) {
   const g = new THREE.Group();
-  const shirt = new THREE.MeshLambertMaterial({ color: new THREE.Color(shirtColorHex) });
-  const legGeo = new THREE.BoxGeometry(0.22, 0.72, 0.24); legGeo.translate(0, -0.36, 0);
-  const legL = new THREE.Mesh(legGeo, MAT.pants); legL.position.set(-0.14, 0.72, 0);
-  const legR = new THREE.Mesh(legGeo, MAT.pants); legR.position.set(0.14, 0.72, 0);
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.72, 0.34), shirt);
-  torso.position.y = 1.08;
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), MAT.skin);
-  head.position.y = 1.66;
-  const armGeo = new THREE.BoxGeometry(0.16, 0.62, 0.18); armGeo.translate(0, -0.26, 0);
-  const armL = new THREE.Mesh(armGeo, shirt); armL.position.set(-0.38, 1.4, 0);
-  const armR = new THREE.Mesh(armGeo, shirt); armR.position.set(0.38, 1.4, 0);
-  // ★銃種別ホルダー（種類ごとに見た目が変わる）
+  const hiQ = !!detail;   // プレイヤー向け lavish ディテール（ボットは軽量）
+  const shirtMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(shirtColorHex) });
+  const pantsMat = new THREE.MeshLambertMaterial({ color: 0x39424e });
+  const bootMat = new THREE.MeshLambertMaterial({ color: 0x22262e });
+  const skinMat = MAT.skin;
+  const hairMat = new THREE.MeshLambertMaterial({ color: 0x3b2a1d });
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1b1f27 });
+  const box = (w, h, d, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+  // 丸みのある手足（円柱8角＋関節ボール）
+  const limb = (rt, rb, h, m) => new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, 8), m);
+  const ball = (r, m) => new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), m);
+
+  const body = new THREE.Group();      // しゃがみ/着地の上下オフセット
+  g.add(body);
+  const hips = new THREE.Group();      // 腿の向き（移動方向へ向ける）
+  hips.position.y = HIP_Y;
+  body.add(hips);
+  const pelvis = box(0.38, 0.26, 0.26, pantsMat);
+  hips.add(pelvis);
+  const belt = box(0.4, 0.07, 0.28, bootMat);
+  belt.position.y = 0.14;
+  hips.add(belt);
+
+  function makeLeg(sx) {
+    const hip = new THREE.Group();
+    hip.position.set(sx * 0.12, -0.06, 0);
+    const thigh = limb(0.105, 0.088, 0.4, pantsMat);
+    thigh.position.y = -0.2;
+    hip.add(thigh);
+    const knee = new THREE.Group();
+    knee.position.y = -0.4;
+    const kneeBall = ball(0.085, pantsMat);
+    knee.add(kneeBall);
+    hip.add(knee);
+    const shin = limb(0.085, 0.068, 0.36, pantsMat);
+    shin.position.y = -0.18;
+    knee.add(shin);
+    const ankle = new THREE.Group();
+    ankle.position.y = -0.36;
+    knee.add(ankle);
+    const foot = box(0.17, 0.12, 0.3, bootMat);
+    foot.position.set(0, -0.05, 0.05);
+    ankle.add(foot);
+    hips.add(hip);
+    return { hip, knee, ankle, thigh, shin, foot, kneeBall };
+  }
+  const L = makeLeg(-1), R = makeLeg(1);
+
+  const torso = new THREE.Group();    // 上半身（照準方向を保つ）
+  torso.position.y = 0.04;
+  hips.add(torso);
+  const abdomen = box(0.34, 0.26, 0.24, shirtMat);
+  abdomen.position.y = 0.13;
+  torso.add(abdomen);
+  const chest = limb(0.225, 0.185, 0.34, shirtMat);
+  chest.scale.z = 0.68;
+  chest.position.y = 0.38;
+  torso.add(chest);
+  const collar = box(0.26, 0.08, 0.22, shirtMat);
+  collar.position.y = 0.55;
+  torso.add(collar);
+  const shoulderBalls = [];
+  for (const sx of [-1, 1]) {
+    if (!hiQ) break;                 // ボットは肩Ball省略（描画負荷軽減）
+    const sh = ball(0.1, shirtMat);
+    sh.position.set(sx * 0.235, 0.46, 0);
+    shoulderBalls.push(sh);
+    torso.add(sh);
+  }
+  const neck = limb(0.07, 0.08, 0.1, skinMat);
+  neck.position.y = 0.6;
+  torso.add(neck);
+
+  const head = new THREE.Group();
+  head.position.y = 0.62;
+  torso.add(head);
+  const skull = box(0.26, 0.27, 0.25, skinMat);
+  skull.position.y = 0.135;
+  head.add(skull);
+  const hair = box(0.28, 0.09, 0.27, hairMat);
+  hair.position.y = 0.235;
+  head.add(hair);
+  for (const sx of [-1, 1]) {
+    if (!hiQ) break;                 // ボットは目と一部の装飾を省略（描画負荷軽減）
+    const eye = box(0.045, 0.05, 0.02, eyeMat);
+    eye.position.set(sx * 0.062, 0.15, 0.128);
+    head.add(eye);
+  }
+
+  function makeArm(sx) {
+    const shoulder = new THREE.Group();
+    shoulder.position.set(sx * 0.26, 0.46, 0);
+    const upper = limb(0.073, 0.062, 0.27, shirtMat);
+    upper.position.y = -0.135;
+    shoulder.add(upper);
+    const elbow = new THREE.Group();
+    elbow.position.y = -0.27;
+    const elbowBall = ball(0.06, skinMat);
+    elbow.add(elbowBall);
+    shoulder.add(elbow);
+    const fore = limb(0.06, 0.05, 0.25, skinMat);
+    fore.position.y = -0.125;
+    elbow.add(fore);
+    const hand = new THREE.Group();
+    hand.position.y = -0.25;
+    const fist = box(0.095, 0.11, 0.1, skinMat);
+    fist.position.y = -0.04;
+    hand.add(fist);
+    elbow.add(hand);
+    torso.add(shoulder);
+    return { shoulder, elbow, hand, upper, fore, fist };
+  }
+  const AL = makeArm(-1), AR = makeArm(1);
+
+  // ★銃種別ホルダー（右手・各種ごとに見た目が変わる）
   const gunHolder = new THREE.Group();
-  gunHolder.position.set(0, -0.52, 0.3);
-  armR.add(gunHolder);
+  gunHolder.position.set(0, -0.1, 0.02);
+  AR.hand.add(gunHolder);
   const gun = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.15, 0.75), MAT.gun);
   gun.visible = false; // 旧互換（非表示）
   gunHolder.add(gun);
-  g.add(legL, legR, torso, head, armL, armR);
+
   // バックパック装着位置（ロッカー反映）
   const packHolder = new THREE.Group();
-  packHolder.position.set(0, 1.18, -0.3);
-  g.add(packHolder);
+  packHolder.position.set(0, 0.32, -0.24);
+  torso.add(packHolder);
   if (name) g.add(makeNameSprite(name));
-  g.userData = { legL, legR, armL, armR, gun, gunHolder, packHolder, torso };
+  g.userData = {
+    rig: 1, body, hips, torso, head, packHolder, gunHolder, gun, hipY: HIP_Y,
+    legL: L.hip, legR: R.hip, kneeL: L.knee, kneeR: R.knee, ankleL: L.ankle, ankleR: R.ankle,
+    armL: AL.shoulder, armR: AR.shoulder, elbowL: AL.elbow, elbowR: AR.elbow, handL: AL.hand, handR: AR.hand,
+    chestMesh: chest, abdomenMesh: abdomen, beltMesh: belt, skull,
+    // ロッカーで色換えする部位（上半身=スキン色／下半身=暗色ボトムス）
+    tintParts: [chest, abdomen, collar].concat(shoulderBalls, [AL.upper, AR.upper, AL.fore, AR.fore]),
+    pantsParts: [pelvis, belt, L.thigh, L.shin, L.foot, L.kneeBall,
+      R.thigh, R.shin, R.foot, R.kneeBall],
+  };
   return g;
+}
+// ロッカー：スキン色をリグ各部に適用（上半身=スキン色/下半身=暗色ボトムス）
+function applySkinLook(g, colorHex) {
+  if (!g || !g.userData) return;
+  const ud = g.userData;
+  const top = new THREE.MeshLambertMaterial({ color: new THREE.Color(colorHex) });
+  const bottom = new THREE.MeshLambertMaterial({ color: new THREE.Color(colorHex).multiplyScalar(0.42) });
+  for (const m of (ud.tintParts || [])) if (m) m.material = top;
+  for (const m of (ud.pantsParts || [])) if (m) m.material = bottom;
 }
 // ロッカー：バックパックの3Dモデル
 function makeBackpackMesh(id) {
@@ -3193,6 +3326,8 @@ function makeEntity(x, z, isPlayer, name, color) {
     // RvB経済・スポーン保護
     coins: 0, coinT: 0, protT: 0,
     cd: 0, swing: 0, hitFlash: 0, stormTick: 0, moving: false, walkPhase: 0, kbX: 0, kbZ: 0,
+    // 歩行アニメーション用（実測速度・進行方向・腰振り）
+    spd: 0, _lvx: 0, _lvz: 0, _hipYaw: 0, _crouch: 0, _stepHalf: null,
     bloom: 0, crouch: false,
     // 状態異常・特殊フラグ（新武器用）
     danceT: 0, rootT: 0, flightT: 0, marked: 0, exposedT: 0, cannonLand: 0, _meleeN: 0,
@@ -3207,7 +3342,7 @@ function makeEntity(x, z, isPlayer, name, color) {
     inVehicle: null,
     mesh: null,
   };
-  e.mesh = makeHumanoid(isPlayer ? '#2e7bd6' : color, isPlayer ? null : name);
+  e.mesh = makeHumanoid(isPlayer ? '#2e7bd6' : color, isPlayer ? null : name, isPlayer);
   e.mesh.position.set(x, 0, z);
   scene.add(e.mesh);
   // ロッカー反映（1Pのみ・2Pとボットは固定）
@@ -3215,10 +3350,7 @@ function makeEntity(x, z, isPlayer, name, color) {
   if (isP1) {
     const L = loadout();
     const sk = SKINS.find(o => o.id === L.skin) || SKINS[0];
-    const sm = new THREE.MeshLambertMaterial({ color: new THREE.Color(sk.color) });
-    e.mesh.userData.torso.material = sm;
-    e.mesh.userData.armL.material = sm;
-    e.mesh.userData.armR.material = sm;
+    applySkinLook(e.mesh, sk.color);
     e.pickSkin = L.pickaxe;
   } else {
     e.pickSkin = 'stdpick';
@@ -6240,8 +6372,12 @@ function updateRailtrains(dt) {
 // =========================================================
 const net = { active: false, isHost: false, peer: null, conn: null, room: '',
   pad: null, prevPadKeys: {}, sendT: 0, inT: 0, lootMap: new Map(),
-  lastSq: {}, prevHp: 0, matchOn: false, pendingWelcome: null };
+  lastSq: {}, prevHp: 0, matchOn: false, pendingWelcome: null,
+  guestBullets: [], status: '', startingOnline: false };
 let selfIdx = 0; // ゲストは1（自分=players[1]）
+// ゲスト入力（ホストへ転送する状態）
+const guestKeys = {};
+let guestMouseDown = false, guestMouseR = false, guestLookDX = 0, guestLookDY = 0;
 let lootSeq = 0, treeSeq = 0, rockSeq = 0;
 const originalRandom = Math.random;
 function seededRandom(seed) {
@@ -6279,6 +6415,7 @@ function entSnap(e) {
     sel: e.sel, alive: e.alive ? 1 : 0, mt: e.mats | 0, po: e.potions | 0, me: e.medkits | 0, gr: e.grenades | 0,
     wps: e.weapons.map(w => w ? { t: w.type, r: w.rarity, a: w.ammo } : null),
     cr: e.crouch ? 1 : 0, mv: e.moving ? 1 : 0, sp: e.sprinting ? 1 : 0,
+    sd: _r1(e.spd || 0), ld: _r1(e.landT || 0),
     bm: e.buildMode ? 1 : 0, bp: e.buildPiece, bmt: e.buildMaterial | 0, brt: e.buildRot | 0,
     fl: e.falling ? 1 : 0, gl: e.glider ? 1 : 0, fp: e.firstPerson ? 1 : 0,
     tm: e.team, kl: e.kills | 0, ads: e.ads ? 1 : 0,
@@ -6307,6 +6444,9 @@ function buildSnapshot() {
 }
 // ---- ゲスト：スナップショット適用 ----
 function applyEnt(e, d) {
+  // 進行方向（腰振り用）はスナップショット差分から取る
+  if (e._netDriven) { e._lvx = d.x - e.x; e._lvz = d.z - e.z; }
+  e._netDriven = true;
   e.x = d.x; e.y = d.y; e.z = d.z; e.hp = d.hp; e.shield = d.sh;
   e.aimYaw = d.yaw; e.aimPitch = d.pitch; e.yaw = d.yaw; e.pitch = d.pitch;
   e.sel = d.sel; e.mats = d.mt; e.potions = d.po; e.medkits = d.me; e.grenades = d.gr;
@@ -6318,6 +6458,7 @@ function applyEnt(e, d) {
     } else e.weapons[i] = null;
   }
   e.crouch = !!d.cr; e.moving = !!d.mv; e.sprinting = !!d.sp;
+  e.spd = d.sd || 0; e.landT = d.ld || 0;
   e.buildMode = !!d.bm; e.buildPiece = d.bp; e.buildMaterial = d.bmt; e.buildRot = d.brt;
   e.falling = !!d.fl; e.glider = !!d.gl; e.firstPerson = !!d.fp;
   e.team = d.tm; e.kills = d.kl; e.ads = !!d.ads;
@@ -6419,23 +6560,38 @@ function applyStructDel(d) {
   if (s && !s.dead) removeStructure(s);
 }
 // ---- ゲスト：入力収集＆送信（30Hz） ----
-const guestKeys = {};
-let guestMouseDown = false, guestMouseR = false, guestLookDX = 0, guestLookDY = 0;
-const GUEST_KEY_LIST = ['KeyE', 'KeyR', 'KeyQ', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyG', 'KeyF', 'KeyT', 'KeyN', 'KeyM', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Space', 'ShiftLeft', 'ShiftRight', 'Enter', 'Slash', 'Semicolon', 'Quote', 'Comma', 'Period', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+const GUEST_KEY_LIST = ['KeyE', 'KeyR', 'KeyQ', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyG', 'KeyF', 'KeyT', 'KeyN', 'KeyM', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Space', 'ShiftLeft', 'ShiftRight', 'Enter', 'Slash', 'Semicolon', 'Quote', 'Comma', 'Period', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'TouchCrouch', 'TouchDrop'];
+// タッチボタン：1回だけ押されたキー（ホスト側でエッジ検知される）
+const guestPulse = {};
+function pulseKey(code) { guestPulse[code] = true; }
+// ローカルの操作対象プレイヤー（オンラインゲストは2P）
+function localPlayer() { return players[selfIdx] || players[0]; }
+function isNetGuest() { return net.active && !net.isHost; }
 function netGuestSendInput() {
   if (!(net.active && !net.isHost)) return;
-  if (state.phase === 'menu' || state.paused) return;
+  if (state.phase === 'menu' || state.paused) { guestPulseKeysClear(); return; }
   let mx = 0, mz = 0;
   if (guestKeys.KeyW || guestKeys.ArrowUp) mz += 1;
   if (guestKeys.KeyS || guestKeys.ArrowDown) mz -= 1;
   if (guestKeys.KeyA || guestKeys.ArrowLeft) mx -= 1;
   if (guestKeys.KeyD || guestKeys.ArrowRight) mx += 1;
+  // タッチ操作（iPad）：仮想スティック・スワイプ視点・ボタン
+  mx += touchState.mx; mz += touchState.mz;
   const keys = {};
   for (const c of GUEST_KEY_LIST) keys[c] = !!guestKeys[c];
+  for (const c in guestPulse) keys[c] = true;
   netSend({ t: 'in', mx, mz, lookDX: guestLookDX, lookDY: guestLookDY,
-    jump: !!guestKeys.Space, attack: guestMouseDown, ads: guestMouseR,
-    sprint: !!(guestKeys.ShiftLeft || guestKeys.ShiftRight), keys });
+    jump: !!(guestKeys.Space || touchState.jump), attack: !!(guestMouseDown || touchState.attack),
+    ads: !!(guestMouseR || touchFlags.ads), touch: touchOn ? 1 : 0,
+    sprint: !!(guestKeys.ShiftLeft || guestKeys.ShiftRight || touchState.sprint), keys });
   guestLookDX = 0; guestLookDY = 0;
+  guestPulseKeysClear();
+}
+function guestPulseKeysClear() { for (const c in guestPulse) delete guestPulse[c]; }
+// 降下ボタン用：ジャンプ入力を一瞬だけ押す（バスからの飛び降りも含む）
+function pulseJump() {
+  touchState.jump = true;
+  setTimeout(() => { touchState.jump = false; }, 140);
 }
 // ---- ゲスト：フレーム処理（simなし・描画のみ） ----
 function netGuestFrame(dt) {
@@ -6453,8 +6609,10 @@ function netGuestFrame(dt) {
 function netApplyLook(pl) {
   const P = net.pad;
   if (!P) return;
-  pl.yaw -= (P.lookDX || 0) * 0.0026 * (P.ads ? 0.6 : 1);
-  pl.pitch = clamp(pl.pitch - (P.lookDY || 0) * 0.0026 * (P.ads ? 0.6 : 1), -1.45, 1.25);
+  // タッチ入力は画面上のピクセル差分なので感度を上げる
+  const k = P.touch ? 1.7 : 1;
+  pl.yaw -= (P.lookDX || 0) * 0.0026 * k * (P.ads ? 0.6 : 1);
+  pl.pitch = clamp(pl.pitch - (P.lookDY || 0) * 0.0026 * k * (P.ads ? 0.6 : 1), -1.45, 1.25);
   P.lookDX = 0; P.lookDY = 0;
 }
 function netPadInput(pl) {
@@ -6467,6 +6625,8 @@ function netPadInput(pl) {
   if (edge('Digit4') && pl.weapons[2]) pl.sel = 3;
   if (edge('Digit5') && pl.weapons[3]) pl.sel = 4;
   if (edge('KeyM')) pl._toggleFp = true;
+  // タッチUI用：しゃがみ・降下（iPad）
+  if (edge('TouchCrouch')) { pl.crouch = !pl.crouch; tone(400, 0.05, 'sine', 0.06); }
   if (edge('KeyG') && pl.grenades > 0) { pl.grenades--; throwGrenade(pl, camFwdOf(pl)); }
   if (edge('KeyF') && pl.potions > 0 && pl.shield < 100) {
     pl.potions--; pl.shield = Math.min(100, pl.shield + 50);
@@ -6643,8 +6803,8 @@ function startOnlineGuest(w) {
   // ゲストは全画面表示（アスペクト補正）
   cams[1].aspect = vw / vh;
   cams[1].updateProjectionMatrix();
-  lockPointer();
-  toast('合流！あなたは2P（オレンジ）です');
+  if (!touchOn) lockPointer();
+  toast(touchOn ? '合流！タッチで操作できます（2P・オレンジ）' : '合流！あなたは2P（オレンジ）です');
 }
 const ONLINE_MODES = [
   { base: 'br', emoji: '🤝', name: 'BRデュオ', desc: 'ホスト＋ゲスト協力で40人BR！' },
@@ -7282,6 +7442,11 @@ function updatePlayer(pl, dt) {
   const len = Math.hypot(dx, dz);
   pl.moving = len > 0.01;
   pl.sprinting = false;
+  // 接地判定（移動の加速率とジャンプに使うので先に求める）
+  const groundH = groundHeightAt(pl.x, pl.z, pl.y);
+  const railY = railRoofAt(pl.x, pl.z, pl.y);
+  const onGround = pl.y <= groundH + 0.02 || (railY != null && Math.abs(pl.y - railY) < 0.35);
+  const onGroundAcc = onGround && !pl.falling;
   if (pl.moving) {
     dx /= len; dz /= len;
     let speed = PLAYER_SPEED;
@@ -7289,8 +7454,24 @@ function updatePlayer(pl, dt) {
     if (pl.ads) speed *= 0.55;
     if (pl.crouch) speed *= 0.5;
     if (inWaterOf(pl)) speed *= 0.55;
-    pl.x += dx * speed * dt;
-    pl.z += dz * speed * dt;
+    if (!pl.falling) {
+      // 加速つき移動：地面は高加速・空中は低加速・方向転換時は強く減速
+      const tVX = dx * speed, tVZ = dz * speed;
+      const cur = Math.hypot(pl.vx, pl.vz);
+      const dot = cur > 0.4 ? (pl.vx * tVX + pl.vz * tVZ) / (cur * speed) : 1;
+      const turning = dot < 0.2;
+      const accel = onGroundAcc ? (turning ? 30 : 58) : 11;
+      const k = Math.min(1, (accel * dt) / Math.max(1.8, speed * 0.85));
+      pl.vx += (tVX - pl.vx) * k;
+      pl.vz += (tVZ - pl.vz) * k;
+    }
+    if (!pl.falling) { pl.x += pl.vx * dt; pl.z += pl.vz * dt; }
+  } else if (!pl.falling) {
+    // 入力なし：摩擦で滑らかに停止
+    const fr = Math.max(0, 1 - (onGroundAcc ? 14 : 2) * dt);
+    pl.vx *= fr; pl.vz *= fr;
+    if (Math.abs(pl.vx) < 0.05) pl.vx = 0;
+    if (Math.abs(pl.vz) < 0.05) pl.vz = 0;
   }
   // ノックバック／ダッシュの慣性移動
   if (pl.kbX || pl.kbZ) {
@@ -7300,10 +7481,6 @@ function updatePlayer(pl, dt) {
     if (Math.abs(pl.kbX) < 0.1) pl.kbX = 0;
     if (Math.abs(pl.kbZ) < 0.1) pl.kbZ = 0;
   }
-  // ジャンプ・重力・構造物の上（レール電車の屋根も足場に）
-  const groundH = groundHeightAt(pl.x, pl.z, pl.y);
-  const railY = railRoofAt(pl.x, pl.z, pl.y);
-  const onGround = pl.y <= groundH + 0.02 || (railY != null && Math.abs(pl.y - railY) < 0.35);
 
   // ---- 立体起動装置：グラップル移動（1Pのみ・ワイヤー表示は1Pカメラ用）----
   const odmOn = cwOdmActiveEnt(pl);
@@ -7355,7 +7532,15 @@ function updatePlayer(pl, dt) {
     }
   } else if (pl.grapple) { releaseGrapple(); }
 
-  if (inp.jump && onGround && !odmOn && pl.flightT <= 0) { pl.vy = 8.6; if (pl.idx === 0) SFX.jump(); }
+  // ジャンプ: コヨーテ時間 + 先行入力 + 押している間だけ高く跳ぶ
+  if (inp.jump && !pl._jumpWasDown) pl.jumpBuf = 0.14;
+  else pl.jumpBuf = Math.max(0, (pl.jumpBuf || 0) - dt);
+  pl._jumpWasDown = !!inp.jump;
+  pl.coyote = onGroundAcc ? 0.11 : Math.max(0, (pl.coyote || 0) - dt);
+  if (pl.jumpBuf > 0 && pl.coyote > 0 && !odmOn && pl.flightT <= 0) {
+    pl.vy = 8.7; pl.jumpBuf = 0; pl.coyote = 0; pl._cutJump = true;
+    if (pl.idx === 0 || (net.active && net.isHost && pl.idx === 1)) SFX.jump();
+  }
   if (pl.flightT > 0) {
     // ジェットパック／X-4飛行: ジャンプで上昇・それ以外は浮揚
     pl.vy += ((inp.jump ? 7 : 2.0) - pl.vy) * Math.min(1, dt * 6);
@@ -7363,18 +7548,35 @@ function updatePlayer(pl, dt) {
     if (pl.y < groundH) { pl.y = groundH; pl.vy = Math.max(pl.vy, 0); }
     if (Math.random() < 0.35) spawnBurst(pl.x, pl.y + 0.2, pl.z, 1, '#ff9d3a', 3);
   } else if (!odmOn) {
-    pl.vy -= GRAVITY * dt;
+    // 重力: 上昇中は軽く（頂点で少し浮く）／離すと重く／落下は少し強い
+    let g = GRAVITY;
+    if (pl.vy > 0) {
+      g = inp.jump ? GRAVITY * 0.8 : GRAVITY * 1.9;
+      if (pl.vy < 2.6) g *= 0.72;
+    } else g = GRAVITY * 1.15;
+    pl.vy -= g * dt;
     pl.y += pl.vy * dt;
+    if (pl.vy <= 0) pl._cutJump = false;
   } else if (pl.y < groundH && !pl.grapple) { pl.y = Math.max(pl.y, groundH); pl.vy = 0; }
   // 落下ダメージなし（着地判定のみ・レール屋根も着地可）
   pl.airPeak = Math.max(pl.airPeak || groundH, pl.y);
   const landY = (railY != null && pl.y >= railY - 0.6) ? Math.max(groundH, railY) : groundH;
   if (pl.flightT <= 0 && !odmOn && pl.y < landY) {
+    const impact = clamp(-pl.vy / 17, 0, 1.3);
     pl.y = landY; pl.vy = 0;
     pl.airPeak = landY;
+    // 着地の重さ（体の圧縮・土煙）
+    if (impact > 0.12) {
+      pl.landT = impact;
+      if (pl.idx === 0 || (net.active && net.isHost && pl.idx === 1)) {
+        SFX.land();
+        spawnBurst(pl.x, pl.y + 0.08, pl.z, 3 + Math.round(impact * 5), '#d8d0bd', 1.6 + impact * 2.4);
+      }
+    }
     // パイレートキャノン: 着地時に爆風
     if (pl.cannonLand) { pl.cannonLand = 0; cannonBlast(pl); }
   }
+  pl.landT = Math.max(0, (pl.landT || 0) - dt * 2.6);
   collideStatics(pl);
 
   // よじ登り: 一段の壁（高さ3.4m以内）にジャンプしながら接すると登る（乗車中は不可）
@@ -7769,9 +7971,19 @@ function updateBot(bot, dt) {
   if (bot.rootT > 0) { mx = 0; mz = 0; } // 動き封じ
   const len = Math.hypot(mx, mz);
   bot.moving = len > 0.05;
+  // 加速つき移動（プレイヤーと同じく滑らかに発進・停止）
   if (bot.moving) {
-    bot.x += mx / len * BOT_SPEED * dt;
-    bot.z += mz / len * BOT_SPEED * dt;
+    const nx = mx / len, nz = mz / len;
+    const k = Math.min(1, 9 * dt);
+    bot.vx += (nx * BOT_SPEED - bot.vx) * k;
+    bot.vz += (nz * BOT_SPEED - bot.vz) * k;
+    bot.x += bot.vx * dt;
+    bot.z += bot.vz * dt;
+  } else {
+    const fr = Math.max(0, 1 - 12 * dt);
+    bot.vx *= fr; bot.vz *= fr;
+    if (Math.abs(bot.vx) < 0.05) bot.vx = 0;
+    if (Math.abs(bot.vz) < 0.05) bot.vz = 0;
   }
   // ノックバックの慣性移動
   if (bot.kbX || bot.kbZ) {
@@ -7846,6 +8058,143 @@ function botWeaponScore(w) {
 // メッシュ同期
 // =========================================================
 const HIT_MAT = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x883333 });
+// 実際の移動速度（位置差分から算出）
+function measureSpeed(e, dt) {
+  if (e._lx == null || dt <= 0) { e._lx = e.x; e._lz = e.z; e.spd = 0; return 0; }
+  const dx = e.x - e._lx, dz = e.z - e._lz;
+  e._lx = e.x; e._lz = e.z;
+  const raw = Math.hypot(dx, dz) / dt;
+  // テレポート（降下・出現・复位）は無視して滑らかに追従
+  e.spd = (raw > 22 ? 0 : e.spd * 0.55 + raw * 0.45);
+  if (e.spd < 0.06) e.spd = 0;
+  return e.spd;
+}
+// ポーズ補間（角度はラップ）
+function lerpAngle(cur, target, k) {
+  return cur + angleDiff(target, cur) * k;
+}
+// ---- 歩行アニメーション（関節リグ対応） ----
+function animateRig(e, dt) {
+  const ud = e.mesh.userData;
+  if (!ud.rig) return;
+  const crouch = (e.isPlayer && e.crouch) ? 1 : 0;
+  e._crouch = e._crouch == null ? crouch : e._crouch + (crouch - e._crouch) * Math.min(1, dt * 12);
+  const cw = e._crouch;
+  const spd = e.spd || 0;
+  const grounded = !e.falling;
+
+  // --- 歩容位相（移動速度に比例） ---
+  if (e.moving && grounded) e.walkPhase += dt * (3.2 + spd * 1.55);
+  else if (!e.moving) e.walkPhase = lerp(e.walkPhase % TAU, 0, Math.min(1, dt * 8));
+  const ph = e.walkPhase;
+  const sn = Math.sin(ph);
+  const amp = clamp(spd / 5.2, 0, 1.25) * (1 - cw * 0.35);
+
+  // --- 進行方向へ腰を振り、上半身は照準方向を保つ（ターン方式） ---
+  if (e.moving && spd > 0.4) {
+    const mvYaw = Math.atan2(e._lvx || 0, e._lvz || 1);
+    const off = clamp(angleDiff(mvYaw, e.aimYaw), -1.0, 1.0);
+    e._hipYaw = e._hipYaw == null ? off : lerpAngle(e._hipYaw, off, Math.min(1, dt * 9));
+  } else {
+    e._hipYaw = e._hipYaw == null ? 0 : lerpAngle(e._hipYaw, 0, Math.min(1, dt * 8));
+  }
+  ud.hips.rotation.y = e._hipYaw;
+  ud.torso.rotation.y = -e._hipYaw * 0.35;
+  // 上下動（歩調に合わせた軽いボブ＋着地の沈み込み）
+  const land = e.landT || 0;
+  const bob = grounded ? Math.abs(sn) * 0.045 * amp : 0;
+  ud.hips.position.y = (ud.hipY != null ? ud.hipY : 0.93) - cw * 0.34 - bob - land * 0.16;
+
+  // --- 前傾（ダッシュ・しゃがみ） ---
+  const leanT = (e.sprinting ? 0.2 : e.ads ? -0.06 : 0.04) + cw * 0.42;
+  e.mesh.rotation.x = lerp(e.mesh.rotation.x, e.alive ? leanT : 0, Math.min(1, dt * 8));
+
+  // --- 脚（腿→膝→足首の3関節） ---
+  if (e.falling) {
+    // 落下：膝を曲げて腕を上げる
+    ud.legL.rotation.x = lerp(ud.legL.rotation.x, 0.45, Math.min(1, dt * 8));
+    ud.legR.rotation.x = lerp(ud.legR.rotation.x, -0.2, Math.min(1, dt * 8));
+    ud.kneeL.rotation.x = lerp(ud.kneeL.rotation.x, 0.9, Math.min(1, dt * 8));
+    ud.kneeR.rotation.x = lerp(ud.kneeR.rotation.x, 0.5, Math.min(1, dt * 8));
+    ud.ankleL.rotation.x = lerp(ud.ankleL.rotation.x, -0.3, Math.min(1, dt * 8));
+    ud.ankleR.rotation.x = lerp(ud.ankleR.rotation.x, -0.3, Math.min(1, dt * 8));
+  } else {
+    const thighL = sn * 0.62 * amp - cw * 0.85 + land * 0.35;
+    const thighR = -sn * 0.62 * amp - cw * 0.85 + land * 0.35;
+    ud.legL.rotation.x = lerp(ud.legL.rotation.x, thighL, Math.min(1, dt * 22));
+    ud.legR.rotation.x = lerp(ud.legR.rotation.x, thighR, Math.min(1, dt * 22));
+    // 膝は後ろに曲がる（脚が上がっているときほど曲がる）
+    const kneeBase = 0.12 + cw * 1.5 + land * 0.9;
+    ud.kneeL.rotation.x = lerp(ud.kneeL.rotation.x, kneeBase + Math.max(0, -sn) * 1.15 * amp, Math.min(1, dt * 22));
+    ud.kneeR.rotation.x = lerp(ud.kneeR.rotation.x, kneeBase + Math.max(0, sn) * 1.15 * amp, Math.min(1, dt * 22));
+    ud.ankleL.rotation.x = lerp(ud.ankleL.rotation.x, -thighL * 0.35 - 0.06, Math.min(1, dt * 18));
+    ud.ankleR.rotation.x = lerp(ud.ankleR.rotation.x, -thighR * 0.35 - 0.06, Math.min(1, dt * 18));
+  }
+
+  // --- 腕 ---
+  const w = currentWeapon(e);
+  const gunLike = w && !WEAPON_TYPES[w.type].melee;
+  if (e.falling) {
+    ud.armL.rotation.x = lerp(ud.armL.rotation.x, -2.5, Math.min(1, dt * 8));
+    ud.armR.rotation.x = lerp(ud.armR.rotation.x, -2.5, Math.min(1, dt * 8));
+    ud.armL.rotation.z = lerp(ud.armL.rotation.z, -0.3, Math.min(1, dt * 8));
+    ud.armR.rotation.z = lerp(ud.armR.rotation.z, 0.3, Math.min(1, dt * 8));
+    ud.elbowL.rotation.x = lerp(ud.elbowL.rotation.x, -0.5, Math.min(1, dt * 8));
+    ud.elbowR.rotation.x = lerp(ud.elbowR.rotation.x, -0.5, Math.min(1, dt * 8));
+    ud.gunHolder.rotation.x = lerp(ud.gunHolder.rotation.x, 0, Math.min(1, dt * 8));
+    ud.gunHolder.rotation.y = lerp(ud.gunHolder.rotation.y, 0, Math.min(1, dt * 8));
+    ud.handL.position.set(0, -0.25, 0);
+  } else if (gunLike) {
+    // 射撃ポーズ：両腕で武器を水平に構え、照準角に追従させる
+    const ap = clamp(e.aimPitch || 0, -1.2, 1.2);
+    ud.armR.rotation.x = lerp(ud.armR.rotation.x, -1.44 - ap, Math.min(1, dt * 16));
+    ud.armR.rotation.z = lerp(ud.armR.rotation.z, -0.2, Math.min(1, dt * 16));
+    ud.elbowR.rotation.x = lerp(ud.elbowR.rotation.x, -0.16, Math.min(1, dt * 16));
+    ud.armL.rotation.x = lerp(ud.armL.rotation.x, -1.26 - ap * 0.9, Math.min(1, dt * 16));
+    ud.armL.rotation.z = lerp(ud.armL.rotation.z, 0.34, Math.min(1, dt * 16));
+    ud.elbowL.rotation.x = lerp(ud.elbowL.rotation.x, -0.34, Math.min(1, dt * 16));
+    // 左手は前方へ伸ばしてフォアグリップを支える
+    const sway = Math.sin(ph) * 0.04 * amp;
+    ud.handL.position.x = lerp(ud.handL.position.x, 0.07 + sway, Math.min(1, dt * 12));
+    ud.handL.position.y = lerp(ud.handL.position.y, -0.44, Math.min(1, dt * 12));
+    // 銃の向き：腕・上半身の回転を打ち消して真正面＋照準角を保つ
+    ud.gunHolder.rotation.x = -(ud.armR.rotation.x + ud.elbowR.rotation.x) - ap;
+    ud.gunHolder.rotation.y = -(ud.torso.rotation.y + ud.armR.rotation.z * 0.8);
+  } else {
+    // 近接・素手：腕を振る（右腕で振り抜く）
+    const swingA = e.swing > 0 ? Math.sin((e.swing / 0.25) * Math.PI) : 0;
+    ud.armL.rotation.x = lerp(ud.armL.rotation.x, -sn * 0.55 * amp - 0.06 - cw * 0.3, Math.min(1, dt * 16));
+    ud.armL.rotation.z = lerp(ud.armL.rotation.z, 0.12, Math.min(1, dt * 12));
+    ud.elbowL.rotation.x = lerp(ud.elbowL.rotation.x, -0.25 - Math.max(0, sn) * 0.5 * amp, Math.min(1, dt * 16));
+    const targetR = -0.35 - swingA * 2.1 - cw * 0.5;
+    ud.armR.rotation.x = lerp(ud.armR.rotation.x, targetR, Math.min(1, dt * 20));
+    ud.armR.rotation.z = lerp(ud.armR.rotation.z, -0.08, Math.min(1, dt * 12));
+    ud.elbowR.rotation.x = lerp(ud.elbowR.rotation.x, -0.3 - Math.max(0, -swingA) * 0.7, Math.min(1, dt * 18));
+    ud.gunHolder.rotation.x = lerp(ud.gunHolder.rotation.x, 0, Math.min(1, dt * 12));
+    ud.gunHolder.rotation.y = lerp(ud.gunHolder.rotation.y, 0, Math.min(1, dt * 12));
+    ud.handL.position.x = lerp(ud.handL.position.x, 0, Math.min(1, dt * 12));
+    ud.handL.position.y = lerp(ud.handL.position.y, -0.25, Math.min(1, dt * 12));
+  }
+
+  // --- 頭：照準に少し追従 ---
+  ud.head.rotation.x = lerp(ud.head.rotation.x, clamp((e.aimPitch || 0) * 0.35, -0.5, 0.5), Math.min(1, dt * 10));
+  ud.head.rotation.y = lerp(ud.head.rotation.y, -e._hipYaw * 0.5, Math.min(1, dt * 8));
+
+  // --- 足音（接地・移動中のみ・距離で減衰） ---
+  if (e.moving && grounded && spd > 0.8) {
+    const half = Math.floor(ph / Math.PI);
+    if (e._stepHalf == null) e._stepHalf = half;
+    if (half !== e._stepHalf) {
+      e._stepHalf = half;
+      const d = dist2D(e, player);
+      if (d < 26) {
+        const v = (1 - d / 26) * (e.sprinting ? 0.05 : 0.035);
+        tone(140 + Math.random() * 80, 0.055, 'triangle', v, -70);
+        if (d < 7 && Math.random() < 0.5) spawnBurst(e.x, e.y + 0.05, e.z, 1, '#d8d0bd', 1.2);
+      }
+    }
+  }
+}
 function syncMeshes(dt) {
   const all = allCombatants();
   for (const e of all) {
@@ -7861,28 +8210,16 @@ function syncMeshes(dt) {
     }
     e.mesh.position.set(e.x, e.y, e.z);
     e.mesh.rotation.y = e.aimYaw;
-    const crouchScale = (e.isPlayer && e.crouch) ? 0.78 : 1;
-    e.mesh.scale.y += (crouchScale - e.mesh.scale.y) * Math.min(1, dt * 10);
-    // ダッシュモーション: 前傾ポーズ＋足の速いアニメーション
-    const lean = (e.sprinting && e.moving) ? 0.22 : 0;
-    e.mesh.rotation.x += (lean - e.mesh.rotation.x) * Math.min(1, dt * 8);
+    // 進行方向ベクトル（腰振り用）
+    if (!e._netDriven) {
+      e._lvx = e.x - (e._lpX == null ? e.x : e._lpX);
+      e._lvz = e.z - (e._lpZ == null ? e.z : e._lpZ);
+      e._lpX = e.x; e._lpZ = e.z;
+      measureSpeed(e, dt);
+    }
+    if (e.alive) animateRig(e, dt);
     const ud = e.mesh.userData;
     if (e.alive) {
-      if (e.moving) e.walkPhase += dt * (e.sprinting ? 14 : 9);
-      const sw = e.moving ? Math.sin(e.walkPhase) * (e.sprinting ? 0.85 : 0.65) : (e.falling ? 0.3 : 0);
-      ud.legL.rotation.x = sw; ud.legR.rotation.x = -sw;
-      ud.armL.rotation.x = -sw * 0.7;
-      if (e.falling) { ud.armL.rotation.x = -2.6; ud.armR.rotation.x = -2.6; }
-      else {
-        const w = currentWeapon(e);
-        if (w && !WEAPON_TYPES[w.type].melee) {
-          ud.armR.rotation.x = -Math.PI / 2 - (e.aimPitch || 0);
-          ud.armR.rotation.z = 0;
-        } else {
-          const swingA = e.swing > 0 ? Math.sin((e.swing / 0.25) * Math.PI) * -1.6 : 0;
-          ud.armR.rotation.x = -0.9 + swingA;
-        }
-      }
       const flash = e.hitFlash > 0;
       e.mesh.traverse(o => {
         if (o.isMesh && o.material && o.material.emissive && o !== ud.gun && !o.userData.gunPart) {
@@ -7911,6 +8248,24 @@ function syncMeshes(dt) {
   killfeed = killfeed.filter(k => k.t > 0);
 }
 
+// ---- 歩行ボブ（土地的 bob & 傾き） ----
+function camBobY(pl) {
+  if (!pl.moving || pl.falling) return 0;
+  const spd = pl.spd || 0;
+  if (spd < 0.4) return 0;
+  const a = clamp(spd / 6.5, 0, 1.2) * (pl.crouch ? 0.4 : 1) * (pl.ads ? 0.3 : 1);
+  return Math.abs(Math.sin(pl.walkPhase)) * 0.055 * a - 0.02 * a - (pl.landT || 0) * 0.12;
+}
+function camBobRoll(pl) {
+  if (!pl.moving || pl.falling) return 0;
+  const spd = pl.spd || 0;
+  if (spd < 0.5) return 0;
+  // 横方向の移動量から傾きを作る
+  const r = { x: -Math.cos(pl.yaw), z: Math.sin(pl.yaw) };
+  const lat = ((pl._lvx || 0) * r.x + (pl._lvz || 0) * r.z);
+  const k = clamp(lat / 6, -1, 1) * 0.035 + Math.sin(pl.walkPhase) * 0.012 * clamp(spd / 6, 0, 1);
+  return k * (pl.ads ? 0.3 : 1) * (pl.crouch ? 0.6 : 1);
+}
 // =========================================================
 // カメラ（プレイヤーごと・一人称/三人称）
 // =========================================================
@@ -7940,11 +8295,15 @@ function updateCameraFor(pl, dt) {
     pl.mesh.visible = false;
     return;
   }
-  // 一人称: 頭位置から視線方向
+    // 一人称: 頭位置から視線方向（歩行の微振動つき）
   if (pl.firstPerson && state.phase === 'play' && pl.alive) {
-    cam.position.set(pl.x, pl.y + (pl.crouch ? 1.25 : 1.5), pl.z);
+    const bobY = camBobY(pl);
+    cam.position.set(pl.x, pl.y + (pl.crouch ? 1.25 : 1.5) + bobY, pl.z);
     const f = camFwdOf(pl);
     cam.lookAt(cam.position.x + f.x * 10, cam.position.y + f.y * 10, cam.position.z + f.z * 10);
+    // 歩調に合わせた微細なロール（横移動で傾く）
+    const lat = camBobRoll(pl);
+    cam.rotateZ(lat);
     if (pl.alive) pl.mesh.visible = false;
     return;
   }
@@ -7970,6 +8329,11 @@ function updateCameraFor(pl, dt) {
     .addScaledVector(_camFwd, -dist)
     .addScaledVector(_camRight, side);
   _camPos.y += state.phase === 'sky' ? 1.5 : flyK ? 2.2 : vehK ? 1.4 : CAM_UP;
+  // 歩行ボブ（三人称カメラ・しゃがみやADSで抑制）
+  if (!vehK && !pl.ads && state.phase === 'play') {
+    _camPos.y += camBobY(pl) * 0.7;
+    _camPos.addScaledVector(_camRight, Math.sin(pl.walkPhase * 0.5) * 0.03 * clamp((pl.spd || 0) / 6, 0, 1));
+  }
   if (_camPos.y < 0.4) _camPos.y = 0.4;
   if (pl.idx === 0 && shakeT > 0) {
     shakeT = Math.max(0, shakeT - (dt || 0.016));
@@ -7979,6 +8343,8 @@ function updateCameraFor(pl, dt) {
   cam.position.copy(_camPos);
   _camTarget.addScaledVector(_camFwd, 8);
   cam.lookAt(_camTarget);
+  // 歩行ロール（横移動で自然に傾く）
+  if (!vehK && !pl.ads && state.phase === 'play') cam.rotateZ(camBobRoll(pl));
   if (pl.alive && state.phase !== 'bus' && !pl.inVehicle) pl.mesh.visible = true;
 }
 
@@ -8716,6 +9082,7 @@ window.addEventListener('keydown', e => {
   // オンラインゲスト：入力はホストへ転送（ローカル操作なし）
   if (net.active && !net.isHost) {
     guestKeys[e.code] = true;
+    if (e.code === 'KeyP') { if (state.paused) resumeGame(); else pauseGame(); }
     initAudio();
     return;
   }
@@ -8869,10 +9236,26 @@ window.addEventListener('touchstart', function te(e) {
   enableTouchUI();
   initAudio();
 }, { passive: true });
+// タッチUI → アクション名：オンラインゲストはホストへキーとして転送
+const TOUCH_KEYMAP = {
+  build: 'KeyQ', wall: 'KeyZ', floor: 'KeyX', ramp: 'KeyC', roof: 'KeyV',
+  mat: 'KeyB', weapon: 'Period', reload: 'KeyR', use: 'KeyE',
+  nade: 'Slash', pot: 'Semicolon', heal: 'Quote', auto: 'KeyN',
+  crouch: 'TouchCrouch', drop: 'TouchDrop',
+};
 function touchAction(name) {
   initAudio();
   if (state.phase === 'menu') return;
-  const p1 = players[0];
+  // ---- オンラインゲスト：操作はホスト側で処理（入力パルス送信） ----
+  if (isNetGuest()) {
+    if (state.paused) return;
+    if (name === 'ads') { touchFlags.ads = !touchFlags.ads; tone(600, 0.05, 'sine', 0.06); return; }
+    if (name === 'drop') { pulseKey('Space'); pulseJump(); return; }
+    const k = TOUCH_KEYMAP[name];
+    if (k) { pulseKey(k); tone(520, 0.04, 'square', 0.05); }
+    return;
+  }
+  const p1 = localPlayer();
   if (!p1 || state.paused) return;
   switch (name) {
     case 'ads': ads = !ads; tone(600, 0.05, 'sine', 0.06); break;
@@ -8909,13 +9292,13 @@ function touchAction(name) {
       if (p1.potions > 0 && p1.shield < 100 && state.phase === 'play') {
         p1.potions--; p1.shield = Math.min(100, p1.shield + 50);
         p1.stats.shieldPotions++; SFX.potion();
-        showDmgText({ x: p1.x, y: 2.4, z: p1.z }, '+50 🛡', '#5ad0ff', cams[0]);
+        showDmgText({ x: p1.x, y: 2.4, z: p1.z }, '+50 🛡', '#5ad0ff', cams[p1.idx]);
       } else SFX.deny();
       break;
     case 'heal':
       if (p1.medkits > 0 && p1.hp < 100 && state.phase === 'play') {
         p1.medkits--; p1.hp = 100; SFX.heal();
-        showDmgText({ x: p1.x, y: 2.4, z: p1.z }, 'HP全回復!', '#7ee87e', cams[0]);
+        showDmgText({ x: p1.x, y: 2.4, z: p1.z }, 'HP全回復!', '#7ee87e', cams[p1.idx]);
       } else SFX.deny();
       break;
     case 'auto': setAutoAim(!autoAim); break;
@@ -8940,11 +9323,15 @@ function bindTapButton(id, fn) {
   el.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); fn(); }, { passive: false });
 }
 (function initTouchControls() {
+  // ホストへ転送する入力は guestKeys にも入れておく（オンラインゲスト用）
+  const vKey = (code, down) => { keys[code] = down; if (isNetGuest()) guestKeys[code] = down; };
   bindHoldButton('btnAtk', () => { touchState.attack = true; }, () => {
     touchState.attack = false;
-    if (players[0] && players[0].editState && players[0].editState.sel.size) applyEdit(players[0]);
+    const p = localPlayer();
+    if (p && p.editState && p.editState.sel.size) applyEdit(p);
   });
-  bindHoldButton('btnJump', () => { keys.Space = true; touchState.jump = true; }, () => { keys.Space = false; touchState.jump = false; });
+  bindHoldButton('btnJump', () => { vKey('Space', true); touchState.jump = true; },
+    () => { vKey('Space', false); touchState.jump = false; });
   bindTapButton('btnAds', () => touchAction('ads'));
   bindTapButton('btnBuild', () => touchAction('build'));
   bindTapButton('btnWall', () => touchAction('wall'));
@@ -9012,10 +9399,15 @@ function bindTapButton(id, fn) {
     for (const t of e.changedTouches) {
       if (t.identifier !== lookTouchId) continue;
       if (state.phase === 'menu' || state.paused) continue;
-      const sens = 0.0042 * (ads ? 0.6 : 1);
-      yaw -= (t.clientX - lookLastX) * sens;
-      pitch -= (t.clientY - lookLastY) * sens;
-      pitch = clamp(pitch, -1.45, 1.25);
+      const px = t.clientX - lookLastX, py = t.clientY - lookLastY;
+      // オンラインゲスト：ピクセル差分をそのままホストへ転送（感度はホスト側で調整）
+      if (isNetGuest()) { guestLookDX += px; guestLookDY += py; }
+      else {
+        const sens = 0.0042 * (ads ? 0.6 : 1);
+        yaw -= px * sens;
+        pitch -= py * sens;
+        pitch = clamp(pitch, -1.45, 1.25);
+      }
       lookLastX = t.clientX; lookLastY = t.clientY;
     }
   }, { passive: false });
@@ -9026,10 +9418,15 @@ function bindTapButton(id, fn) {
   };
   look.addEventListener('touchend', lookEnd);
   look.addEventListener('touchcancel', lookEnd);
-  // スロットタップで武器切替
+  // スロットタップで武器切替（オンラインゲストはホストへ転送）
   if (typeof slotEls !== 'undefined') {
     slotEls.forEach((el, i) => {
-      el.addEventListener('click', () => { if (player && touchOn) player.sel = i; });
+      el.addEventListener('click', () => {
+        if (!touchOn) return;
+        if (isNetGuest()) { pulseKey('Digit' + (i + 1)); tone(500, 0.05, 'square', 0.06); return; }
+        const p = localPlayer();
+        if (p) p.sel = i;
+      });
     });
   }
 })();
@@ -9075,10 +9472,76 @@ $('lobbyBtn2').addEventListener('click', e => { e.stopPropagation(); backToLobby
 $('bedShopClose').addEventListener('click', closeBedShop);
 $('rvbShopClose').addEventListener('click', closeRvbShop);
 
-// メニュー背景
-initGame();
+// =========================================================
+// 直接ゲーム起動（URLパラメータ）
+//   index.html?play=1                 … ロビーを飛ばして前回のモードで即出撃
+//   index.html?play=1&mode=duel       … モード指定
+//   index.html?play=1&mode=br&mod=sniper&two=1
+//   index.html?play=1&mode=bed        … ベッドウォーズ etc
+// =========================================================
+const MODE_ALIAS = {
+  br: 'br', royale: 'br', battle: 'br',
+  pvp: 'pvp', '1v1': 'pvp', duel: 'duel', '1v1duel': 'duel',
+  rvb: 'rvb', tdm: 'rvb', 'redblue': 'rvb',
+  bed: 'bed', bedwars: 'bed', 'bed-wars': 'bed',
+};
+function urlParams() {
+  const P = {};
+  let s = '';
+  try { s = (location.search || '') + (location.hash || ''); } catch (e) { return P; }
+  s = String(s).replace(/^[?#]+/, '');
+  if (!s) return P;
+  for (const part of s.split(/[&;]/)) {
+    if (!part) continue;
+    const i = part.indexOf('=');
+    const k = decodeURIComponent(i < 0 ? part : part.slice(0, i)).toLowerCase();
+    const v = i < 0 ? '1' : decodeURIComponent(part.slice(i + 1).replace(/\+/g, ' '));
+    P[k] = v;
+  }
+  return P;
+}
+function flagOn(v) { return v === '' || v === '1' || v === 'true' || v === 'on' || v === 'yes'; }
+// 直接リンクの生成（?play=1&mode=…&two=1&mod=…）
+function directPlayURL(m) {
+  const m2 = m || lastMode();
+  let base = '';
+  try { base = location.href.split('?')[0].split('#')[0]; } catch (e) { base = 'index.html'; }
+  return base + '?play=1&mode=' + encodeURIComponent(m2.mode || 'br') +
+    (m2.two ? '&two=1' : '') + (m2.mod ? '&mod=' + encodeURIComponent(m2.mod) : '');
+}
+// URLに play/auto/quick/start/go/skip があればロビーをスキップして出撃
+function autoStartFromUrl() {
+  const P = urlParams();
+  const trig = ['play', 'auto', 'quick', 'start', 'go', 'skip', 'battle']
+    .some(k => P[k] !== undefined && flagOn(P[k]));
+  if (!trig) return false;
+  if (net.active) return false;           // オンライン接続中はURLで勝手に出撃しない
+  const last = lastMode();
+  let mode = MODE_ALIAS[String(P.mode || '').toLowerCase()] || '';
+  if (!mode || !PLAY_MODES.some(o => o.base === mode)) mode = last.mode || 'br';
+  let mod = String(P.mod || '').toLowerCase();
+  if (mod && !MODS[mod]) mod = null;
+  const two = P.two !== undefined ? flagOn(P.two) : (mode === last.mode ? !!last.two : false);
+  startGame(mode, two, mod);
+  return true;
+}
+// 起動：URLに play があればロビーを飛ばして即出撃（それ以外はロビー背景生成）
+if (!autoStartFromUrl()) initGame();
 applyGliderSkin();
 renderLobby();
+// ロビーの「⚡ 直接プレイURL」ボタン：即戦場リンクをコピー
+(function bindDirectLink() {
+  const btn = $('directLinkBtn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const url = directPlayURL();
+    const done = () => toast('⚡ コピーしました：' + url);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(done, () => { toast(url); });
+    } else toast(url);
+    SFX.pickup();
+  });
+})();
 requestAnimationFrame(frame);
 </script>
 </body>
